@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { buildProjectPlan } from './core/buildProjectPlan';
 import {
   ArrowLeft,
   ArrowRight,
@@ -161,6 +162,17 @@ function formatNumber(value: number): string {
   return value.toLocaleString('ru-RU', { maximumFractionDigits: 1 });
 }
 
+const DEMO_WASTE_PERCENT = 10; // Временное значение для проверки движка; согласовать с бэкендом.
+
+function formatMoney(value: number): string {
+  return new Intl.NumberFormat('ru-BY', {
+    style: 'currency',
+    currency: 'BYN',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function roomKindLabel(value: RoomKind): string {
   return ROOM_KINDS.find((item) => item.value === value)?.label ?? 'Помещение';
 }
@@ -185,6 +197,8 @@ function App() {
   const [activeTab, setActiveTab] = useState('План работ');
   const [showAllStages, setShowAllStages] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [projectPlan, setProjectPlan] = useState<ReturnType<typeof buildProjectPlan> | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
 
   const updateDraft = (patch: Partial<ProjectDraft>) => {
     setDraft((current) => ({ ...current, ...patch }));
@@ -224,6 +238,20 @@ function App() {
     if (index < STEP_ORDER.length - 1) {
       setWizardStep(STEP_ORDER[index + 1]);
     } else {
+      // Временно запускаем расчёт на demoMaterials.ts. Это тестовая смета, не каталог и цены ОМА.
+      try {
+        const result = buildProjectPlan({
+          lengthM: draft.room.lengthM,
+          widthM: draft.room.widthM,
+          heightM: draft.room.heightM,
+          wastePercent: DEMO_WASTE_PERCENT,
+        });
+        setProjectPlan(result);
+        setPlanError(null);
+      } catch (error) {
+        setProjectPlan(null);
+        setPlanError(error instanceof Error ? error.message : 'Не удалось рассчитать тестовый план.');
+      }
       setScreen('result');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -467,7 +495,7 @@ function App() {
         {screen === 'result' && (
           <div className="page-wrap wizard-page">
             <section className="hero-heading wizard-heading">
-              <div><div className="eyebrow"><span className="orange-dot" /> ПАРАМЕТРЫ СОХРАНЕНЫ</div><h1>Основа проекта готова</h1><p>Вы сможете вернуться к параметрам и изменить их в любой момент.</p></div>
+              <div><div className="eyebrow"><span className="orange-dot" /> ПАРАМЕТРЫ И ТЕСТОВЫЙ РАСЧЁТ</div><h1>Основа проекта готова</h1><p>Расчёт пока использует демонстрационные материалы, а не подтверждённый каталог ОМА.</p></div>
               <button className="outline-button" onClick={() => setScreen('dashboard')} type="button">К панели проекта</button>
             </section>
             <section className="wizard-result-grid">
@@ -486,8 +514,37 @@ function App() {
                 <p className="wizard-footnote">* Площадь стен указана без вычета окон и дверей.</p>
                 <div className="wizard-result-actions"><button className="outline-button" type="button" onClick={() => openWizard('task')}><Pencil size={15} /> Изменить параметры</button><button className="primary-button" type="button" onClick={() => setScreen('dashboard')}>К панели проекта <ArrowRight size={15} /></button></div>
               </div>
-              <aside className="wizard-next-card"><span className="wizard-next-icon"><Package size={24} /></span><h2>Следующий этап</h2><p>Подключим расчёт материалов, каталог товаров ОМА и смету. Пока здесь отображаются параметры формы, а не готовый расчёт.</p><ul><li>Подбор товаров из каталога</li><li>Расчёт необходимого количества</li><li>Разделение подтверждённых и ориентировочных цен</li></ul></aside>
+              <aside className="wizard-next-card"><span className="wizard-next-icon"><Package size={24} /></span><h2>Что означает этот расчёт</h2><p>Движок сейчас использует demoMaterials.ts и общий набор этапов. Он ещё не выбирает разные материалы под ванную, покраску, кухню, состояние стен или бюджет.</p><ul><li>Тестовые материалы и цены</li><li>Временный запас {DEMO_WASTE_PERCENT}%</li><li>Не является реальной сметой ОМА</li></ul></aside>
             </section>
+
+            {planError && <div className="wizard-plan-error" role="alert"><strong>Не удалось выполнить расчёт</strong><span>{planError}</span></div>}
+
+            {projectPlan && <section className="wizard-calculation-section" aria-labelledby="calculation-title">
+              <div className="wizard-section-title"><h2 id="calculation-title">Результат расчётного движка</h2><p>Тестовый прогон buildProjectPlan() — значения ниже не являются реальными ценами и рекомендациями ОМА.</p></div>
+              <div className="wizard-calculation-summary">
+                <div><span>Площадь пола</span><strong>{formatNumber(projectPlan.floorAreaM2)} м²</strong></div>
+                <div><span>Площадь стен</span><strong>{formatNumber(projectPlan.wallAreaM2)} м²</strong></div>
+                <div><span>Тестовая сумма</span><strong>{formatMoney(projectPlan.estimate.total)}</strong></div>
+              </div>
+              <div className="wizard-calculation-grid">
+                <section className="wizard-panel">
+                  <div className="wizard-section-title"><h3>Этапы работ</h3><p>Общие демонстрационные этапы из текущего движка.</p></div>
+                  <ol className="wizard-calculation-steps">
+                    {projectPlan.steps.map((step) => <li key={step.id}><span className="wizard-calculation-step-number">{step.id}</span><div><strong>{step.title}</strong><p>{step.description}</p></div></li>)}
+                  </ol>
+                </section>
+                <section className="wizard-panel">
+                  <div className="wizard-section-title"><h3>Материалы из demoMaterials.ts</h3><p>Тестовые данные для проверки формул.</p></div>
+                  <div className="wizard-calculation-materials">
+                    {projectPlan.estimate.items.map((item) => <div className="wizard-calculation-material" key={item.materialId}>
+                      <div><strong>{item.name}</strong><span>{item.quantity} {item.unit} · {formatMoney(item.unitPrice)} за единицу</span></div>
+                      <b>{formatMoney(item.totalPrice)}</b>
+                    </div>)}
+                  </div>
+                </section>
+              </div>
+              <p className="wizard-demo-warning"><strong>Важно:</strong> текущий движок не учитывает выбранный тип задачи при подборе материалов. До интеграции реального каталога и согласования правил с бэкендером воспринимайте результат только как проверку расчётных функций.</p>
+            </section>}
           </div>
         )}
       </main>
